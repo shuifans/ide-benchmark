@@ -1,0 +1,6 @@
+{
+  "base_url": "https://api.example.com/v1",
+  "api_key": "sk-xxxx",
+  "model": "your-judge-model",
+  "temperature": 0
+}

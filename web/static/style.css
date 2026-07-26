@@ -1,0 +1,58 @@
+:root{--blue:#0969da;--green:#1a7f37;--red:#cf222e;--border:#d0d7de;--bg:#f6f8fa;--muted:#656d76}
+*{box-sizing:border-box}
+body{font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;margin:0;color:#1f2328;background:#fff}
+header{padding:20px 28px;border-bottom:1px solid var(--border)}
+header h1{margin:0;font-size:20px}
+header .sub{margin:6px 0 0;color:var(--muted);font-size:13px}
+#steps{display:flex;gap:0;border-bottom:1px solid var(--border);padding:0 28px;background:var(--bg)}
+.step{padding:12px 18px;font-size:13px;color:var(--muted);border-bottom:2px solid transparent;display:flex;align-items:center;gap:8px}
+.step .num{display:inline-flex;width:20px;height:20px;border-radius:50%;border:1px solid var(--border);align-items:center;justify-content:center;font-size:12px;background:#fff}
+.step.active{color:var(--blue);border-bottom-color:var(--blue);font-weight:600}
+.step.active .num{background:var(--blue);color:#fff;border-color:var(--blue)}
+.step.done{color:var(--green)}
+.step.done .num{background:var(--green);color:#fff;border-color:var(--green)}
+main{padding:24px 28px;max-width:1000px}
+h2{font-size:17px;margin:0 0 8px}
+.hint{font-size:13px;color:var(--muted);line-height:1.7;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 14px}
+button{font:inherit;padding:8px 18px;border-radius:6px;border:1px solid var(--border);background:#fff;cursor:pointer}
+button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+button.primary:disabled{opacity:.5;cursor:not-allowed}
+button.ghost{background:#fff}
+button.danger{color:var(--red)}
+.actions{margin:16px 0}
+table{border-collapse:collapse;width:100%;font-size:13px;margin-top:12px}
+th,td{border:1px solid var(--border);padding:6px 10px;text-align:left}
+th{background:var(--bg)}
+input,select{font:inherit;padding:5px 8px;border:1px solid var(--border);border-radius:6px;width:100%}
+.task-group{margin-top:18px}
+.task-group h3{font-size:14px;margin:0 0 8px}
+.task-group h3 .tag{font-size:11px;border-radius:10px;padding:2px 10px;margin-left:6px}
+.tag.easy{background:#dafbe1;color:var(--green)}
+.tag.medium{background:#fff8c5;color:#9a6700}
+.tag.hard{background:#ffebe9;color:var(--red)}
+.task-cards{display:flex;gap:12px;flex-wrap:wrap}
+.task-card{border:1px solid var(--border);border-radius:8px;padding:14px 16px;min-width:240px;flex:1;cursor:pointer}
+.task-card:hover{border-color:var(--blue)}
+.task-card.selected{border-color:var(--blue);background:#f0f7ff;box-shadow:0 0 0 1px var(--blue)}
+.task-card .tid{font-weight:600;font-size:14px}
+.task-card .meta{color:var(--muted);font-size:12px;margin-top:6px}
+.card{border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-top:14px}
+.card h4{margin:0 0 8px;font-size:14px}
+.ok{color:var(--green);font-weight:600}
+.err{color:var(--red);font-weight:600}
+.warn-note{color:#9a6700;font-size:12px}
+pre{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:12px;overflow:auto;max-height:260px;white-space:pre-wrap}
+.copy-wrap{position:relative}
+.copy-btn{position:absolute;top:8px;right:8px;padding:3px 10px;font-size:12px;background:#fff}
+.copy-btn.copied{background:var(--green);color:#fff;border-color:var(--green)}
+.copy-btn.inline{position:static;margin-left:8px;vertical-align:middle}
+.launch-step{margin-top:12px;font-size:13px}
+.launch-step .ln{color:var(--blue);font-weight:700;margin-right:4px}
+pre.clamp{max-height:120px}
+code.path{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:12px}
+.wizard-nav{display:flex;gap:12px;margin-top:32px;padding-top:16px;border-top:1px solid var(--border)}
+.wizard-nav .danger{margin-left:auto}
+.muted{color:var(--muted);font-size:12px}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.report-link{display:inline-block;margin-top:12px;font-size:15px;font-weight:600;color:var(--blue)}

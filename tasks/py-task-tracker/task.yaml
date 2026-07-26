@@ -1,0 +1,10 @@
+task_id: py-task-tracker
+title: SPEC 驱动实现任务跟踪 CLI 应用
+category: app
+difficulty: hard
+language: python
+timeout_s: 3600
+prompt_version: v1
+verifier:
+  command: python -m pytest verifier/ -q --tb=line
+  copy_into_work: true   # verifier 在 verify 阶段才复制进 work/，agent 运行期间不可见

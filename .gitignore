@@ -1,0 +1,12 @@
+# raw run artifacts stay local
+runs/
+__pycache__/
+*.pyc
+.DS_Store
+
+# real judge credentials
+config/judge.json
+
+# read-only reference clones
+agent-coding-bench/
+ai-ide-benchmark/

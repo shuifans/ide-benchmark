@@ -1,0 +1,10 @@
+task_id: py-fix-off-by-one
+title: 修复分页模块的 off-by-one 错误
+category: bugfix
+difficulty: easy
+language: python
+timeout_s: 600
+prompt_version: v1
+verifier:
+  command: python -m pytest verifier/ -q --tb=line
+  copy_into_work: true   # verifier 在 verify 阶段才复制进 work/，agent 运行期间不可见

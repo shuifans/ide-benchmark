@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "bench run manifest",
+  "description": "prepare 阶段生成的运行清单：锁定任务、prompt、agent、模型与参数，用于控制变量",
+  "type": "object",
+  "required": [
+    "manifest_version",
+    "run_id",
+    "task_id",
+    "prompt_version",
+    "prompt_sha256",
+    "prompt_file",
+    "agent",
+    "model",
+    "params",
+    "created_at"
+  ],
+  "properties": {
+    "manifest_version": { "type": "string" },
+    "run_id": {
+      "type": "string",
+      "pattern": "^\\d{8}-[a-z0-9][a-z0-9.-]*-[a-z0-9][a-z0-9.-]*-[a-z0-9][a-z0-9.-]*-\\d{2}$",
+      "description": "<yyyymmdd>-<task>-<agent>-<model>-<seq>"
+    },
+    "task_id": { "type": "string", "minLength": 1 },
+    "prompt_version": { "type": "string", "minLength": 1 },
+    "prompt_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "prompt_file": { "type": "string", "minLength": 1 },
+    "agent": { "type": "string", "enum": ["claude-code", "codex", "qoder-cli", "opencode", "pi", "qwen", "kimi"] },
+    "model": { "type": "string", "minLength": 1 },
+    "params": {
+      "type": "object",
+      "required": ["context_window", "thinking_effort"],
+      "properties": {
+        "context_window": {
+          "type": ["integer", "string"],
+          "description": "上下文窗口，如 1000000 或 \"1M\""
+        },
+        "thinking_effort": {
+          "type": "string",
+          "description": "思考强度档位，如 max/high/medium/low"
+        }
+      },
+      "additionalProperties": true
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "notes": { "type": "string" }
+  },
+  "additionalProperties": true
+}

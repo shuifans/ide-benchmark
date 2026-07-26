@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ide-benchmark · AI 编码工具测评向导</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>AI 编码工具测评向导</h1>
+  <p class="sub">结果质量 · 过程能力 · token 成本 · 时间成本 —— 五步完成一次对比测评</p>
+</header>
+
+<nav id="steps">
+  <div class="step" data-step="1"><span class="num">1</span>选择任务</div>
+  <div class="step" data-step="2"><span class="num">2</span>生成测试环境</div>
+  <div class="step" data-step="3"><span class="num">3</span>运行任务</div>
+  <div class="step" data-step="4"><span class="num">4</span>确认与采集</div>
+  <div class="step" data-step="5"><span class="num">5</span>生成报告</div>
+</nav>
+
+<main>
+  <!-- 步骤 1：选择任务 -->
+  <section data-panel="1">
+    <h2>第一步 · 选择测试任务</h2>
+    <p class="hint">任务按复杂度分为三档：easy（小型修复）/ medium（功能实现）/ hard（SPEC 驱动的多文件应用）。所有候选工具将跑同一任务。</p>
+    <div id="task-groups"></div>
+  </section>
+
+  <!-- 步骤 2：登记候选并生成 run -->
+  <section data-panel="2" hidden>
+    <h2>第二步 · 登记参评工具，生成测试目录与提示词</h2>
+    <p class="hint">为每个参评的编码工具登记 agent + 模型 + 参数。点击「生成测试环境」后，每个候选会得到独立的 run 目录（干净工作区）和任务提示词。</p>
+    <table id="cand-table">
+      <thead><tr><th>Agent</th><th>模型名</th><th>上下文窗口</th><th>思考强度</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <button id="add-cand" class="ghost">+ 添加候选</button>
+    <div class="actions"><button id="btn-prepare" class="primary">生成测试环境</button></div>
+    <div id="prepare-results"></div>
+  </section>
+
+  <!-- 步骤 3：运行指引 -->
+  <section data-panel="3" hidden>
+    <h2>第三步 · 打开各编码工具运行任务</h2>
+    <p class="hint">按下方指引逐个启动编码工具：<b>cd 进对应 work 目录</b> → 设置模型与参数（须与登记一致）→ 粘贴提示词开始任务 → 任务完成后正常结束会话。</p>
+    <div id="launch-guides"></div>
+  </section>
+
+  <!-- 步骤 4：采集 -->
+  <section data-panel="4" hidden>
+    <h2>第四步 · 确认全部跑完，采集日志并客观检查</h2>
+    <p class="hint">确认所有候选任务均已完成后点击「开始采集」。系统会自动：定位日志 → 归一化 token/耗时 → 运行 verifier 客观检查 → 提取过程信号。</p>
+    <div class="actions"><button id="btn-collect" class="primary">全部跑完，开始采集</button></div>
+    <div id="collect-results"></div>
+  </section>
+
+  <!-- 步骤 5：报告 -->
+  <section data-panel="5" hidden>
+    <h2>第五步 · 生成对比测评报告</h2>
+    <p class="hint">将对每个 run 进行 LLM 盲评（需先配置 config/judge.json），生成对比分析正文与 HTML 报告。权重可调（默认 R45 结果 / P30 过程 / T15 token / D10 时间）。</p>
+    <label>权重：<input id="weights" value="R45,P30,T15,D10" size="20"></label>
+    <div class="actions"><button id="btn-report" class="primary">生成对比报告</button></div>
+    <div id="report-status"></div>
+  </section>
+
+  <footer class="wizard-nav">
+    <button id="btn-prev" class="ghost">上一步</button>
+    <button id="btn-next" class="primary">下一步</button>
+    <button id="btn-reset" class="ghost danger">重新开始</button>
+  </footer>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

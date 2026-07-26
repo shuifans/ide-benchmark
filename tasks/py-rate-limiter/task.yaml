@@ -1,0 +1,10 @@
+task_id: py-rate-limiter
+title: 实现滑动窗口限流器
+category: feature
+difficulty: medium
+language: python
+timeout_s: 1800
+prompt_version: v1
+verifier:
+  command: python -m pytest verifier/ -q --tb=line
+  copy_into_work: true   # verifier 在 verify 阶段才复制进 work/，agent 运行期间不可见

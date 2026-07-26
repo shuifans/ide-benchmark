@@ -1,0 +1,98 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "bench run record",
+  "description": "collect 阶段归一化产物，所有下游（verify/评分/报告）只认此格式",
+  "type": "object",
+  "required": [
+    "run_id",
+    "task_id",
+    "agent",
+    "started_at",
+    "ended_at",
+    "duration_s",
+    "usage",
+    "status",
+    "prompt_sha256"
+  ],
+  "properties": {
+    "run_id": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "minLength": 1 },
+    "agent": {
+      "type": "object",
+      "required": ["harness", "model"],
+      "properties": {
+        "harness": { "type": "string", "enum": ["claude-code", "codex", "qoder-cli", "opencode", "pi", "qwen", "kimi"] },
+        "version": { "type": ["string", "null"] },
+        "model": { "type": "string", "minLength": 1 },
+        "params": {
+          "type": "object",
+          "properties": {
+            "context_window": { "type": ["integer", "string"] },
+            "thinking_effort": { "type": "string" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "model_mismatch": {
+      "type": "boolean",
+      "description": "日志回读的实际模型与 manifest 声明不一致时置 true"
+    },
+    "actual_model": { "type": ["string", "null"] },
+    "human_intervention": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "运行过程中用户人工介入次数（collect 时向用户确认）"
+    },
+    "started_at": { "type": "string" },
+    "ended_at": { "type": "string" },
+    "duration_s": { "type": "number", "minimum": 0 },
+    "usage": {
+      "type": "object",
+      "required": [
+        "input_tokens",
+        "cache_read_tokens",
+        "output_tokens",
+        "cost_usd",
+        "cost_source",
+        "price_version"
+      ],
+      "properties": {
+        "input_tokens": { "type": "integer", "minimum": 0, "description": "非缓存输入 token" },
+        "cache_read_tokens": { "type": "integer", "minimum": 0, "description": "缓存命中 token" },
+        "cache_creation_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "cost_usd": { "type": "number", "minimum": 0 },
+        "cost_source": { "type": "string", "enum": ["price_table", "api"] },
+        "price_version": { "type": "string" },
+        "credits_consumed": {
+          "type": ["number", "null"],
+          "description": "Qoder Credits 实际消耗（仅附注，不参与评分）"
+        }
+      },
+      "additionalProperties": true
+    },
+    "tool_calls": { "type": "integer", "minimum": 0 },
+    "turns": { "type": "integer", "minimum": 0 },
+    "status": { "type": "string", "enum": ["completed", "timeout", "error"] },
+    "prompt_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "process": {
+      "type": "object",
+      "description": "L1 过程探测器输出（process_metrics.py 回填）",
+      "properties": {
+        "planning": { "type": "boolean" },
+        "plan_items": { "type": "integer", "minimum": 0 },
+        "plan_completed": { "type": "integer", "minimum": 0 },
+        "scope_adherence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "self_test_after_last_edit": { "type": "boolean" },
+        "retry_pattern_max": { "type": "integer", "minimum": 0 },
+        "failed_tool_calls": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "notes": { "type": "string" }
+  },
+  "additionalProperties": true
+}
