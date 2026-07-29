@@ -29,7 +29,7 @@ from common import (
 )
 
 RUBRIC_PATH = CONFIG_DIR / "rubric-v3.md"
-RUBRIC_VERSION = "v3"
+RUBRIC_VERSION = "v3.1"
 ANALYSIS_DIR = ROOT / "results" / "analysis"
 
 # 盲评清洗：agent / 厂商 / 模型家族标识符 → [agent]
