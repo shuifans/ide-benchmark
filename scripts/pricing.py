@@ -10,8 +10,13 @@ from __future__ import annotations
 
 import argparse
 
+import re
+
 PRICE_VERSION = "2026-07-v1"
 CNY_PER_USD = 7.2
+
+# 日期后缀模式：model-name-MMDD 或 model-name-YYYYMMDD
+_DATE_SUFFIX_RE = re.compile(r"^(.+?)-(\d{4}|\d{2})(\d{2})?(\d{2})?$")
 
 # 原始标价：Ultimate/Performance 为 USD/M，其余为 CNY/M（百炼刊例）
 _RAW_TABLE = {
@@ -29,18 +34,29 @@ _RAW_TABLE = {
 
 # 模型名别名（大小写不敏感）→ 价格表 key
 ALIASES = {
+    # Qoder Ultimate / Performance
     "ultimate": "ultimate",
     "claude-opus-4-8": "ultimate",
     "performance": "performance",
     "gpt-5.5": "performance",
+    # DeepSeek（百炼刊例）
     "deepseek-v4-pro": "deepseek-v4-pro",
     "deepseek-v4-flash": "deepseek-v4-flash",
+    # DeepSeek 日期变体（Qoder CLI 实际模型名）
+    "deepseek-v4-flash-0731": "deepseek-v4-flash",
+    # Qoder 内部 X-Model-Key → 价格表
+    "dmodel": "deepseek-v4-pro",       # DeepSeek V4 Pro
+    "dfmodel": "deepseek-v4-flash",    # DeepSeek V4 Flash
+    # Qwen / 通义千问（百炼刊例）
     "qwen3.7-max": "qwen3.7-max",
     "qwen3.7-plus": "qwen3.7-plus",
+    # GLM / 智谱（百炼刊例）
     "glm-5.2": "glm-5.2",
+    # MiniMax（百炼刊例）
     "minimax-m3": "minimax-m3",
+    # Kimi / 月之暗面（百炼刊例）
     "kimi-k2.7-code": "kimi-k2.7-code",
-    # 本机各 CLI 日志中出现的模型 id → 最近价格档（如价差大请补独立条目）
+    # ---- 本机各 CLI 日志中出现的模型 id → 最近价格档（如价差大请补独立条目） ----
     "qwen3.8-max-preview": "qwen3.7-max",
     "glm-5.1": "glm-5.2",
     "kimi-code/k3": "kimi-k2.7-code",
@@ -60,11 +76,27 @@ TABLE: dict[str, dict[str, float]] = {
 
 
 def resolve_model(model: str) -> str | None:
-    """把用户填的模型名归一到价格表 key；未知返回 None。"""
+    """把用户填的模型名归一到价格表 key；未知返回 None。
+
+    支持三级匹配：
+    1. 精确匹配（TABLE key 或 ALIASES）
+    2. 去日期后缀匹配（如 deepseek-v4-flash-0731 → deepseek-v4-flash）
+    3. Qoder 内部 X-Model-Key 匹配
+    """
     key = model.strip().lower()
     if key in TABLE:
         return key
-    return ALIASES.get(key)
+    alias = ALIASES.get(key)
+    if alias:
+        return alias
+    # 尝试去掉日期后缀（如 deepseek-v4-flash-0731 → deepseek-v4-flash）
+    m = _DATE_SUFFIX_RE.match(key)
+    if m:
+        base = m.group(1)
+        if base in TABLE:
+            return base
+        return ALIASES.get(base)
+    return None
 
 
 def price_parts(model: str) -> dict[str, float] | None:

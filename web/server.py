@@ -6,10 +6,12 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import shutil
 import sys
 import threading
+import time
 import traceback
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -19,7 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "adapters"))
 
-from common import AGENTS, REPORTS_DIR, RUNS_DIR, list_tasks, load_json  # noqa: E402
+from common import AGENTS, REPORTS_DIR, RESULTS_SCORES_DIR, RUNS_DIR, list_tasks, load_json  # noqa: E402
 import prepare as prepare_mod  # noqa: E402
 import collect as collect_mod  # noqa: E402
 import verify as verify_mod  # noqa: E402
@@ -126,24 +128,114 @@ def do_collect(payload: dict) -> list[dict]:
     return results
 
 
+def _already_judged(run_id: str) -> bool:
+    """与 judge.judge_run 的跳过条件一致（score.json 中已有 judge 段）。"""
+    try:
+        return bool(load_json(RESULTS_SCORES_DIR / f"{run_id}.score.json").get("judge"))
+    except (OSError, json.JSONDecodeError):
+        return False
+
+
+def _compare_cached(run_ids: list[str], judge_mod) -> bool:
+    """与 judge.judge_compare 的缓存条件一致（analysis/<key>.json 已存在）。"""
+    try:
+        key = judge_mod.compare_key(run_ids)
+        return (judge_mod.ANALYSIS_DIR / f"{key}.json").is_file()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _report_job(job_id: str, run_ids: list[str], weights_text: str | None) -> None:
     def set_state(**kw):
         with JOBS_LOCK:
             JOBS[job_id].update(kw)
+
+    def begin_step(i, line):
+        with JOBS_LOCK:
+            s = JOBS[job_id]["steps"][i]
+            s["status"] = "running"
+            s["started_at"] = time.time()
+            JOBS[job_id]["progress"] = line
+
+    def end_step(i, status, line, note=None):
+        with JOBS_LOCK:
+            s = JOBS[job_id]["steps"][i]
+            s["status"] = status
+            s["finished_at"] = time.time()
+            if note:
+                s["note"] = note
+            JOBS[job_id]["progress"] = line
+
+    def fail_step(i, exc):
+        with JOBS_LOCK:
+            s = JOBS[job_id]["steps"][i]
+            if s["status"] == "running":
+                s["status"] = "error"
+                s["finished_at"] = time.time()
+                s["note"] = str(exc)
+
+    # ---- 预建步骤列表，首次轮询即可看到全貌 ----
     try:
         import judge as judge_mod
         weights = report_mod.parse_weights(weights_text)
-        # 逐 run 盲评（已评的自动跳过）
-        for i, rid in enumerate(run_ids):
-            set_state(progress=f"judge 盲评 {i + 1}/{len(run_ids)}: {rid}")
-            judge_mod.judge_run(rid)
-        set_state(progress="生成对比分析正文")
-        judge_mod.judge_compare(run_ids)
-        set_state(progress="渲染 HTML 报告")
-        out = report_mod.render_compare(run_ids, weights, REPORTS_DIR)
-        set_state(state="done", progress="完成", report_url=f"/reports/{out.name}")
     except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
+        set_state(state="error", error=str(exc))
+        return
+
+    n = len(run_ids)
+    steps = [{
+        "id": f"judge-{i}",
+        "label": f"盲评 {i + 1}/{n}",
+        "target": rid,
+        "status": "pending",
+        "note": None,
+        "started_at": None,
+        "finished_at": None,
+    } for i, rid in enumerate(run_ids)]
+    steps += [
+        {"id": "compare", "label": "对比分析", "target": None,
+         "status": "pending", "note": None, "started_at": None, "finished_at": None},
+        {"id": "render", "label": "渲染报告", "target": None,
+         "status": "pending", "note": None, "started_at": None, "finished_at": None},
+    ]
+    set_state(started_at=time.time(), steps=steps, progress="准备中")
+
+    try:
+        # ---- 逐 run 盲评 ----
+        for i, rid in enumerate(run_ids):
+            skipped = _already_judged(rid)
+            if skipped:
+                begin_step(i, f"judge 盲评 {i + 1}/{n}: {rid}（已有结果）")
+                judge_mod.judge_run(rid)
+                end_step(i, "skipped", f"盲评 {i + 1}/{n} 已跳过",
+                         note="已盲评，跳过 LLM 调用")
+                continue
+            begin_step(i, f"judge 盲评 {i + 1}/{n}: {rid}")
+            judge_mod.judge_run(rid)
+            end_step(i, "done", f"盲评 {i + 1}/{n} 完成")
+
+        # ---- 对比分析 ----
+        ci = n
+        cached = _compare_cached(run_ids, judge_mod)
+        begin_step(ci, "生成对比分析正文" + ("（已有缓存）" if cached else ""))
+        judge_mod.judge_compare(run_ids)
+        end_step(ci, "skipped" if cached else "done", "对比分析完成",
+                 note="分析已缓存，跳过 LLM 调用" if cached else None)
+
+        # ---- 渲染 ----
+        ri = n + 1
+        begin_step(ri, "渲染 HTML 报告")
+        out = report_mod.render_compare(run_ids, weights, REPORTS_DIR)
+        end_step(ri, "done", "完成")
+        set_state(state="done", report_url=f"/reports/{out.name}")
+    except Exception as exc:  # noqa: BLE001
+        traceback.print_exc()
+        with JOBS_LOCK:
+            running = next((i for i, s in enumerate(JOBS[job_id]["steps"])
+                            if s["status"] == "running"), None)
+        if running is not None:
+            fail_step(running, exc)
         set_state(state="error", error=str(exc))
 
 
@@ -204,7 +296,7 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/api/report/status/"):
             job_id = path.rsplit("/", 1)[-1]
             with JOBS_LOCK:
-                job = JOBS.get(job_id)
+                job = copy.deepcopy(JOBS.get(job_id))
             self._json(job or {"state": "error", "error": "未知 job"},
                        200 if job else 404)
         else:

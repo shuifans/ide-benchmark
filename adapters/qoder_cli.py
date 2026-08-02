@@ -29,9 +29,10 @@ LLM_PATH_MARK = "agent_chat_generation"
 
 # qoder X-Model-Key 别名 → 模型家族（用于与 manifest 声明模型做一致性比对）
 MODEL_KEY_FAMILY = {
-    "dmodel": "deepseek",
-    "mmodel": "auto",
-    "lite": "lite",
+    "dmodel": "deepseek",       # DeepSeek V4 Pro（推理增强）
+    "dfmodel": "deepseek",      # DeepSeek V4 Flash（快速）
+    "mmodel": "auto",           # 混合/自动路由
+    "lite": "lite",             # 辅助调用（标题生成等）
 }
 
 

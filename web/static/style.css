@@ -56,3 +56,26 @@ code.path{background:var(--bg);border:1px solid var(--border);border-radius:4px;
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .report-link{display:inline-block;margin-top:12px;font-size:15px;font-weight:600;color:var(--blue)}
+
+/* 步骤 5 报告进度 */
+.report-progress{border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-top:12px}
+.report-progress .rp-head{display:flex;gap:8px;align-items:baseline;font-size:13px;margin-bottom:10px;font-variant-numeric:tabular-nums}
+.report-progress .rp-head .sep{color:var(--border)}
+.psteps{list-style:none;margin:0;padding:0;font-size:13px}
+.pstep{display:flex;align-items:baseline;gap:8px;padding:5px 2px;border-top:1px dashed var(--border)}
+.pstep:first-child{border-top:none}
+.pstep .ic{display:inline-block;width:16px;text-align:center;flex:none}
+.pstep .ic.done{color:var(--green);font-weight:700}
+.pstep .ic.error{color:var(--red);font-weight:700}
+.pstep .spinner{margin:0;flex:none;position:relative;top:2px}
+.pstep .lab{font-weight:500}
+.pstep .hint-inline{color:var(--muted);font-weight:400;font-size:12px;margin-left:4px}
+.pstep .note{color:var(--muted);font-size:12px}
+.pstep .meta{margin-left:auto;display:flex;gap:8px;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pstep .tgt{max-width:220px;overflow:hidden;text-overflow:ellipsis}
+.pstep.pending{color:var(--muted)}
+.pstep.pending .lab{font-weight:400}
+.pstep.skipped{color:var(--muted)}
+.pstep.skipped .lab{font-weight:400;font-style:italic}
+.pstep.error .lab{color:var(--red)}
+.report-progress .report-link{margin-top:14px}

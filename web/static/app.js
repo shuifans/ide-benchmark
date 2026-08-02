@@ -285,25 +285,129 @@ async function doReport() {
   }
 }
 
+/* ---------- 步骤 5：进度渲染 ---------- */
+let reportTicker = null;
+let reportLive = [];            // [{el, base, at}]
+
+const nowSec = () => Date.now() / 1000;
+
+function fmtDur(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  if (sec < 60) return `${sec}s`;
+  return `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, "0")}s`;
+}
+function fmtDur1(sec) {
+  return sec == null || sec < 0 ? "" : (sec < 10 ? sec.toFixed(1) : Math.round(sec)) + "s";
+}
+function trackLive(el, sinceEpoch) {
+  if (el && sinceEpoch) reportLive.push({ el, base: nowSec() - sinceEpoch, at: nowSec() });
+}
+function startReportTicker() {
+  if (reportTicker) return;
+  reportTicker = setInterval(() => {
+    reportLive.forEach(({ el, base, at }) => {
+      if (el.isConnected) el.textContent = fmtDur(base + (nowSec() - at));
+    });
+  }, 500);
+}
+function stopReportTicker() {
+  if (reportTicker) { clearInterval(reportTicker); reportTicker = null; }
+  reportLive = [];
+}
+
+const STEP_ICON = { done: "✓", pending: "•", skipped: "↷", error: "✗" };
+
+function stepHtml(s) {
+  const icon = s.status === "running"
+    ? `<span class="spinner"></span>`
+    : `<span class="ic ${esc(s.status)}">${STEP_ICON[s.status] || ""}</span>`;
+  let meta = "";
+  if (s.target) meta += `<span class="tgt">${esc(s.target)}</span>`;
+  if (s.status === "running") {
+    meta += `<span class="dur" data-live></span>`;
+  } else if (s.started_at && s.finished_at) {
+    meta += `<span class="dur">${fmtDur1(s.finished_at - s.started_at)}</span>`;
+  }
+  const note = s.note ? `<span class="note">${esc(s.note)}</span>` : "";
+  const hint = s.status === "running" && s.id && s.id.startsWith("judge-")
+    ? '<span class="hint-inline">（LLM 评分通常 10–60s）</span>' : "";
+  return `<li class="pstep ${esc(s.status)}">${icon}
+      <span class="lab">${esc(s.label)}${hint}</span>
+      ${note}<span class="meta">${meta}</span></li>`;
+}
+
+function estimateEta(steps) {
+  const judges = steps.filter((s) => s.id && s.id.startsWith("judge-"));
+  const done = judges.filter((s) => s.status === "done" && s.started_at && s.finished_at);
+  if (!done.length) return null;
+  const avg = done.reduce((a, s) => a + (s.finished_at - s.started_at), 0) / done.length;
+  const remaining = judges.filter((s) => s.status === "pending" || s.status === "running").length;
+  let eta = avg * remaining;
+  const cmp = steps.find((s) => s.id === "compare");
+  if (cmp && (cmp.status === "pending" || cmp.status === "running")) eta += Math.max(avg, 15);
+  return eta > 2 ? eta : null;
+}
+
+function renderReportProgress(st) {
+  const box = $("#report-status");
+  const steps = Array.isArray(st.steps) ? st.steps : [];
+  if (!steps.length) {
+    if (st.state === "running") {
+      box.innerHTML = `<p><span class="spinner"></span>${esc(st.progress || "处理中")}…</p>`;
+    } else if (st.state === "done") {
+      box.innerHTML = `<p class="ok">✓ 报告已生成</p>
+        <a class="report-link" href="${esc(st.report_url)}" target="_blank">打开对比测评报告 →</a>`;
+    } else {
+      box.innerHTML = `<p class="err">生成失败：${esc(st.error)}</p>
+        <p class="muted">若为 judge 配置缺失：请复制 config/judge.example.json 为 config/judge.json 并填写 API 信息后重试。</p>`;
+    }
+    return;
+  }
+
+  reportLive = [];
+  const head = [];
+  if (st.started_at) {
+    head.push(`已用 <b class="dur" data-total></b>`);
+    if (st.state === "running") {
+      const eta = estimateEta(steps);
+      if (eta) head.push(`<span class="muted">预计还需 ~${fmtDur(eta)}</span>`);
+    }
+    if (st.state === "done") {
+      const last = Math.max(...steps.map((s) => s.finished_at || 0));
+      if (last) head.push(`<span class="muted">共耗时 ${fmtDur1(last - st.started_at)}</span>`);
+    }
+  }
+
+  box.innerHTML = `
+    <div class="report-progress ${esc(st.state)}">
+      <div class="rp-head">${head.join('<span class="sep">·</span>')}</div>
+      <ol class="psteps">${steps.map(stepHtml).join("")}</ol>
+      ${st.state === "done" ? `<a class="report-link" href="${esc(st.report_url)}" target="_blank">打开对比测评报告 →</a>` : ""}
+      ${st.state === "error" ? `<p class="err">生成失败：${esc(st.error)}</p>
+        <p class="muted">若为 judge 配置缺失：请复制 config/judge.example.json 为 config/judge.json 并填写 API 信息后重试。</p>` : ""}
+    </div>`;
+
+  if (st.started_at) trackLive(box.querySelector("[data-total]"), st.started_at);
+  const running = steps.find((s) => s.status === "running");
+  if (running) trackLive(box.querySelector(".pstep.running [data-live]"), running.started_at);
+  if (st.state === "running") startReportTicker(); else stopReportTicker();
+}
+
 async function pollReport() {
   const box = $("#report-status");
   if (!S.jobId) return;
   try {
     const st = await api(`/api/report/status/${S.jobId}`);
+    renderReportProgress(st);
     if (st.state === "running") {
-      box.innerHTML = `<p><span class="spinner"></span>${esc(st.progress || "处理中")}…</p>`;
       setTimeout(pollReport, 1500);
-    } else if (st.state === "done") {
-      box.innerHTML = `<p class="ok">✓ 报告已生成</p>
-        <a class="report-link" href="${esc(st.report_url)}" target="_blank">打开对比测评报告 →</a>`;
-      $("#btn-report").disabled = false;
     } else {
-      box.innerHTML = `<p class="err">生成失败：${esc(st.error)}</p>
-        <p class="muted">若为 judge 配置缺失：请复制 config/judge.example.json 为 config/judge.json 并填写 API 信息后重试。</p>`;
+      stopReportTicker();
       $("#btn-report").disabled = false;
     }
   } catch (e) {
     box.innerHTML = `<p class="err">${esc(e.message)}</p>`;
+    stopReportTicker();
     $("#btn-report").disabled = false;
   }
 }

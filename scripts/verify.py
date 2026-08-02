@@ -68,24 +68,42 @@ def verify(run_id: str) -> Path:
         output = f"(verifier 超时 {timeout}s)\n" + (exc.stdout or "")
         exit_code = -1
 
-    parsed = parse_pytest_output(output)
-    if parsed is not None:
-        passed, total = parsed
+    # 区分“验证器无法执行”（环境故障，如命令不存在/无权限）与“代码未通过验证”
+    low_out = output.lower()
+    unavailable = (exit_code == 127 and "not found" in low_out) or (
+        exit_code == 126 and ("permission denied" in low_out or "cannot execute" in low_out))
+    if unavailable:
+        passed, total = 0, 0
+        status = "error"
     else:
-        # 非 pytest verifier：按退出码给 0/1
-        passed, total = (1, 1) if exit_code == 0 else (0, 1)
+        parsed = parse_pytest_output(output)
+        if parsed is not None:
+            passed, total = parsed
+        else:
+            # 非 pytest verifier：按退出码给 0/1
+            passed, total = (1, 1) if exit_code == 0 else (0, 1)
+        status = "ok"
 
     score = round(passed / total * 100, 1) if total else 0.0
+    verifier_doc = {
+        "passed": passed,
+        "total": total,
+        "score": score,
+        "exit_code": exit_code,
+        "status": status,
+        "log_excerpt": output[-4000:],
+    }
+    if unavailable:
+        verifier_doc["execution"] = "unavailable"
+        for ln in output.splitlines():
+            ll = ln.lower()
+            if "not found" in ll or "permission denied" in ll or "cannot execute" in ll:
+                verifier_doc["reason"] = ln.strip()[:200]
+                break
     score_doc = {
         "run_id": run_id,
         "task_id": run["task_id"],
-        "verifier": {
-            "passed": passed,
-            "total": total,
-            "score": score,
-            "exit_code": exit_code,
-            "log_excerpt": output[-4000:],
-        },
+        "verifier": verifier_doc,
     }
     errors = validate(score_doc, "score")
     if errors:
