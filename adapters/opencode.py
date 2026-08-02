@@ -22,7 +22,7 @@ import shutil
 import sqlite3
 from pathlib import Path
 
-from base import Adapter, classify_tool
+from base import Adapter, classify_tool, open_sqlite_readonly
 
 DEFAULT_DB = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
 
@@ -78,7 +78,10 @@ class OpencodeAdapter(Adapter):
         return int(dt.timestamp() * 1000) if dt else 0
 
     def _extract_session(self, db_path: Path, work_dir: str, created_at: str | None) -> dict:
-        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            con = open_sqlite_readonly(db_path)
+        except sqlite3.Error as exc:
+            raise RuntimeError(f"无法打开 opencode 数据库 {db_path}: {exc}") from exc
         con.row_factory = sqlite3.Row
         try:
             work_dir = _norm_dir(work_dir)

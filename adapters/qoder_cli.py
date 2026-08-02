@@ -12,6 +12,10 @@
 - 辅助调用（如标题生成，X-Model-Key=lite）不计入 token 汇总，单独记录
 
 qodercli 必须经 `claude-tap --tap-client qoder` 启动，否则库中无本次数据。
+
+trace 库为 WAL 模式：须用普通连接 + PRAGMA query_only 打开（见
+base.open_sqlite_readonly），纯 mode=ro URI 在 -shm 文件缺失时报
+'unable to open database file'。
 """
 from __future__ import annotations
 
@@ -21,7 +25,7 @@ import shutil
 import sqlite3
 from pathlib import Path
 
-from base import Adapter, classify_tool
+from base import Adapter, classify_tool, open_sqlite_readonly
 
 DEFAULT_DB = Path.home() / ".local" / "share" / "claude-tap" / "traces.sqlite3"
 
@@ -111,89 +115,105 @@ class QoderCliAdapter(Adapter):
         return dest
 
     def _extract_session(self, db_path: Path, created_at: str | None) -> dict:
-        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         try:
-            tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            if not {"sessions", "records"} <= tables:
-                raise RuntimeError(f"trace 库结构不符合预期（需要 sessions/records 表），实际: {sorted(tables)}")
+            con = open_sqlite_readonly(db_path)
+            try:
+                tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                if not {"sessions", "records"} <= tables:
+                    raise RuntimeError(f"trace 库结构不符合预期（需要 sessions/records 表），实际: {sorted(tables)}")
 
-            sessions = con.execute(
-                "SELECT id, started_at, updated_at FROM sessions "
-                "WHERE client='qoder' ORDER BY started_at"
-            ).fetchall()
-            if not sessions:
-                raise RuntimeError("trace 库中没有 client='qoder' 的 session，"
-                                   "qodercli 可能未经 claude-tap 启动")
+                sessions = con.execute(
+                    "SELECT id, started_at, updated_at FROM sessions "
+                    "WHERE client='qoder' ORDER BY started_at"
+                ).fetchall()
+                if not sessions:
+                    raise RuntimeError("trace 库中没有 client='qoder' 的 session，"
+                                       "qodercli 可能未经 claude-tap 启动")
 
-            chosen = sessions[-1]
-            if created_at:
-                later = [s for s in sessions if str(s[1]) >= created_at]
-                if later:
-                    chosen = later[0]
-            session_id, started_at, updated_at = chosen
+                candidates = sessions
+                if created_at:
+                    later = [s for s in sessions if str(s[1]) >= created_at]
+                    if later:
+                        candidates = later
 
-            rows = con.execute(
-                "SELECT record_index, timestamp, payload_json FROM records "
-                "WHERE session_id=? ORDER BY record_index", (session_id,)).fetchall()
+                # qodercli 启动握手等会产生无 LLM 调用的短 session；
+                # 优先选第一个含 LLM 调用记录的候选，避免误采空 session
+                llm_counts = dict(con.execute(
+                    "SELECT session_id, COUNT(*) FROM records "
+                    "WHERE payload_json LIKE ? GROUP BY session_id",
+                    (f"%{LLM_PATH_MARK}%",)).fetchall())
+                chosen = next(
+                    (s for s in candidates if llm_counts.get(s[0], 0) > 0),
+                    candidates[0],
+                )
+                session_id, started_at, updated_at = chosen
 
-            requests: list[dict] = []
-            aux: list[dict] = []
-            for idx, ts, payload in rows:
-                try:
-                    d = json.loads(payload)
-                except ValueError:
-                    continue
-                req = d.get("request") or {}
-                resp = d.get("response") or {}
-                if LLM_PATH_MARK not in str(req.get("path") or ""):
-                    continue
-                body = resp.get("body")
-                if not isinstance(body, str):
-                    continue
-                parsed = _parse_sse(body)
-                headers = req.get("headers") or {}
-                model_key = next((v for k, v in headers.items()
-                                  if k.lower() == "x-model-key"), None)
-                usage = parsed["usage"]
-                cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
-                rec = {
-                    "record_index": idx,
-                    "ts": d.get("timestamp") or ts,
-                    "duration_ms": d.get("duration_ms"),
-                    "model_key": model_key,
-                    "prompt_tokens": usage.get("prompt_tokens", 0),
-                    "cache_read_tokens": cached,
-                    "completion_tokens": usage.get("completion_tokens", 0),
-                    "reasoning_tokens": (usage.get("completion_tokens_details") or {}).get("reasoning_tokens", 0),
-                    "text": parsed["text"],
-                    "reasoning": parsed["reasoning"],
-                    "tools": parsed["tools"],
+                rows = con.execute(
+                    "SELECT record_index, timestamp, payload_json FROM records "
+                    "WHERE session_id=? ORDER BY record_index", (session_id,)).fetchall()
+
+                requests: list[dict] = []
+                aux: list[dict] = []
+                for idx, ts, payload in rows:
+                    try:
+                        d = json.loads(payload)
+                    except ValueError:
+                        continue
+                    req = d.get("request") or {}
+                    resp = d.get("response") or {}
+                    if LLM_PATH_MARK not in str(req.get("path") or ""):
+                        continue
+                    body = resp.get("body")
+                    if not isinstance(body, str):
+                        continue
+                    parsed = _parse_sse(body)
+                    headers = req.get("headers") or {}
+                    model_key = next((v for k, v in headers.items()
+                                      if k.lower() == "x-model-key"), None)
+                    usage = parsed["usage"]
+                    cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+                    rec = {
+                        "record_index": idx,
+                        "ts": d.get("timestamp") or ts,
+                        "duration_ms": d.get("duration_ms"),
+                        "model_key": model_key,
+                        "prompt_tokens": usage.get("prompt_tokens", 0),
+                        "cache_read_tokens": cached,
+                        "completion_tokens": usage.get("completion_tokens", 0),
+                        "reasoning_tokens": (usage.get("completion_tokens_details") or {}).get("reasoning_tokens", 0),
+                        "text": parsed["text"],
+                        "reasoning": parsed["reasoning"],
+                        "tools": parsed["tools"],
+                    }
+                    requests.append(rec)
+
+                if not requests:
+                    raise RuntimeError(
+                        f"session {session_id} 中没有 LLM 调用记录（{LLM_PATH_MARK}），"
+                        f"任务可能未真正执行")
+
+                # 主模型 = 出现次数最多的 model_key；其余为辅助调用（标题生成等）
+                from collections import Counter
+                key_counts = Counter(r["model_key"] for r in requests)
+                main_key = key_counts.most_common(1)[0][0]
+                main, aux = [], []
+                for r in requests:
+                    (main if r["model_key"] == main_key else aux).append(r)
+
+                return {
+                    "session_id": str(session_id),
+                    "started_at": started_at,
+                    "updated_at": updated_at,
+                    "main_model_key": main_key,
+                    "requests": main,
+                    "aux_requests": aux,
                 }
-                requests.append(rec)
-
-            if not requests:
-                raise RuntimeError(
-                    f"session {session_id} 中没有 LLM 调用记录（{LLM_PATH_MARK}），"
-                    f"任务可能未真正执行")
-
-            # 主模型 = 出现次数最多的 model_key；其余为辅助调用（标题生成等）
-            from collections import Counter
-            key_counts = Counter(r["model_key"] for r in requests)
-            main_key = key_counts.most_common(1)[0][0]
-            main, aux = [], []
-            for r in requests:
-                (main if r["model_key"] == main_key else aux).append(r)
-
-            return {
-                "session_id": str(session_id),
-                "started_at": started_at,
-                "updated_at": updated_at,
-                "main_model_key": main_key,
-                "requests": main,
-                "aux_requests": aux,
-            }
-        finally:
-            con.close()
+            finally:
+                con.close()
+        except sqlite3.Error as exc:
+            raise RuntimeError(
+                f"读取 claude-tap trace 库失败 {db_path}: {exc}\n"
+                f"请确认库文件可读写，且 qodercli 经 claude-tap 启动") from exc
 
     def parse_events(self, transcript_path: Path) -> list[dict]:
         with open(transcript_path, "r", encoding="utf-8") as f:

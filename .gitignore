@@ -1,5 +1,5 @@
-# raw run artifacts stay local
-runs/
+# raw run artifacts stay local (top-level runs/ only; results/runs/ 入仓)
+/runs/
 __pycache__/
 *.pyc
 .DS_Store

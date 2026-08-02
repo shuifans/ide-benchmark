@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 
@@ -89,6 +90,19 @@ def parse_ts(value) -> datetime | None:
         return datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def open_sqlite_readonly(db_path: Path) -> sqlite3.Connection:
+    """以只读语义打开 SQLite 库：普通连接 + PRAGMA query_only。
+
+    不能用 file:...?mode=ro URI：WAL 模式的库在磁盘上没有 -shm/-wal 文件时，
+    纯只读连接无法创建共享内存索引，connect 能成功但首条查询即报
+    'unable to open database file'（SQLITE_CANTOPEN）。普通连接允许 SQLite
+    自行管理 -shm/-wal，PRAGMA query_only=ON 保证本进程绝不写入数据。
+    """
+    con = sqlite3.connect(str(db_path))
+    con.execute("PRAGMA query_only = ON")
+    return con
 
 
 def write_events(events: list[dict], out_path: Path) -> None:

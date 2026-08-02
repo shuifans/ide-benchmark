@@ -55,6 +55,7 @@ python scripts/collect.py <run_id> [--transcript <path>] [--status completed|tim
 
 - token 全 0 → 脚本报错，该 run 作废，回步骤 2 重跑。
 - 模型不在价格表 → 先在 `scripts/pricing.py` 补价格/别名。
+- 报 `unable to open database file` → 旧版 adapter 只读打开 WAL trace 库的缺陷（2026-08 已修）；数据未丢，拉最新代码直接重跑 collect，无需作废 run。
 
 ### 步骤 4：客观检查（L0）
 
