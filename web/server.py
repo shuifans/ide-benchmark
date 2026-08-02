@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import importlib
 import json
 import shutil
 import sys
@@ -33,6 +34,32 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 # 报告后台任务表：job_id -> {state, progress, report_url, error}
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
+
+# 流水线模块（scripts/ + adapters/）按依赖序，供热更新
+_PIPELINE_MODS = [
+    "common", "pricing", "base",
+    "claude_code", "qoder_cli", "opencode", "codex", "pi", "qwen", "kimi",
+    "prepare", "collect", "verify", "process_metrics", "report", "judge",
+]
+_PIPELINE_LOCK = threading.Lock()
+
+
+def _reload_pipeline() -> None:
+    """让 wizard 用上磁盘最新的 scripts/adapters 代码，无需重启服务。
+
+    服务是常驻进程，import 过的模块缓存在 sys.modules；若修了 adapter/collect
+    等代码，旧进程仍跑旧逻辑（曾导致 collect 修复后网页仍报旧错
+    'unable to open database file'）。每次跑流水线前按依赖序 in-place
+    reload，server 持有的模块对象属性随之更新。
+    """
+    with _PIPELINE_LOCK:
+        for name in _PIPELINE_MODS:
+            m = sys.modules.get(name)
+            if m is not None:
+                try:
+                    importlib.reload(m)
+                except Exception:  # noqa: BLE001 —— reload 失败保留旧模块，不阻断
+                    pass
 
 
 def agent_status() -> list[dict]:
@@ -82,6 +109,7 @@ def list_runs() -> list[dict]:
 
 
 def do_prepare(payload: dict) -> list[dict]:
+    _reload_pipeline()
     task_id = payload["task_id"]
     results = []
     for cand in payload.get("candidates") or []:
@@ -100,6 +128,7 @@ def do_prepare(payload: dict) -> list[dict]:
 
 
 def do_collect(payload: dict) -> list[dict]:
+    _reload_pipeline()
     results = []
     for run_id in payload.get("run_ids") or []:
         entry = {"run_id": run_id, "ok": False}
@@ -240,6 +269,7 @@ def _report_job(job_id: str, run_ids: list[str], weights_text: str | None) -> No
 
 
 def do_report(payload: dict) -> dict:
+    _reload_pipeline()
     run_ids = payload.get("run_ids") or []
     if not run_ids:
         raise ValueError("run_ids 为空")
