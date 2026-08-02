@@ -1,5 +1,8 @@
 """L0 客观检查：在 work/ 内执行任务的 verifier 命令，产出 score.json 骨架。
 
+judge-only 任务（未配置 verifier.command）不跑子进程，写 status="skipped"
+的占位 verifier 段，交由 L2 judge 盲评评分。
+
 用法：
   python scripts/verify.py <run_id>
 """
@@ -47,7 +50,25 @@ def verify(run_id: str) -> Path:
     verifier = task.get("verifier") or {}
     command = verifier.get("command")
     if not command:
-        raise RuntimeError(f"任务 {run['task_id']} 未配置 verifier.command")
+        # judge-only 任务：无客观验证器，写占位 verifier 段，交由 L2 judge 盲评评分
+        # （须在 copy_into_work 之前返回，否则 copytree 不存在的 verifier/ 会报错）
+        score_doc = {
+            "run_id": run_id,
+            "task_id": run["task_id"],
+            "verifier": {
+                "passed": 0,
+                "total": 0,
+                "score": 0.0,
+                "status": "skipped",
+                "reason": "judge-only 任务，无客观验证器，由 L2 judge 盲评评分",
+            },
+        }
+        errors = validate(score_doc, "score")
+        if errors:
+            raise RuntimeError("score.json 未通过 schema 校验: " + "; ".join(errors))
+        out = RESULTS_SCORES_DIR / f"{run_id}.score.json"
+        dump_json(score_doc, out)
+        return out
 
     if verifier.get("copy_into_work", True):
         src = Path(task["_dir"]) / "verifier"

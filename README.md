@@ -84,6 +84,12 @@ python scripts/report.py compare <run_id...>                   # HTML 对比报�
 新增任务：复制任意任务目录为模板，改四件套（`task.yaml` / `prompt.md` / `workspace/` / `verifier/`），
 跑 `check_task.py` 看建议。修改 prompt.md 视为新任务（升 `prompt_version`）。
 
+**自定义任务（Web 创建，纯 judge 评分）**：向导第一步「+ 新建自定义任务」只需填写元数据与提示词，
+无需测试用例，落盘三件套（`task.yaml` 无 verifier 块 / `prompt.md` / `workspace/.gitkeep`）。
+此类任务 L0 无客观分（verify 记 `status: skipped`），综合分由 judge 盲评（代码质量）+ P 过程 +
+T/D 效率按可用权重和（默认 10+30+15+10 = 65）组内归一到 0–100，报告中标 `‡`。
+不要与带 verifier 的任务混入同一对比（向导按单任务出报告，天然不混）。
+
 ## 目录结构
 
 ```

@@ -26,6 +26,46 @@
     <h2>第一步 · 选择测试任务</h2>
     <p class="hint">任务按复杂度分为三档：easy（小型修复）/ medium（功能实现）/ hard（SPEC 驱动的多文件应用）。所有候选工具将跑同一任务。</p>
     <div id="task-groups"></div>
+    <div class="actions">
+      <button id="btn-new-task" class="ghost">+ 新建自定义任务（纯 judge 评分）</button>
+    </div>
+    <div id="create-task-form" class="card" hidden>
+      <h4>新建自定义任务（纯 judge 评分）</h4>
+      <p class="muted">只需提供任务提示词，无客观测试用例：L0 无客观分，综合分 = judge 盲评（代码质量）+ 过程能力 + 效率，按可用权重和（默认 65）组内归一。保存后出现在上方任务列表并自动选中。</p>
+      <label>标题 <b class="err">*</b>
+        <input id="ct-title" placeholder="如：实现 JSON 差异对比命令行工具"></label>
+      <label>task_id
+        <input id="ct-task-id" placeholder="由标题自动转写；中文标题需手填，如 py-json-diff">
+        <span class="field-hint" id="ct-slug-hint"></span></label>
+      <div class="ct-row">
+        <label>难度
+          <select id="ct-difficulty">
+            <option value="easy">easy</option>
+            <option value="medium" selected>medium</option>
+            <option value="hard">hard</option>
+          </select></label>
+        <label>分类
+          <input id="ct-category" list="ct-cat-list" placeholder="feature">
+          <datalist id="ct-cat-list">
+            <option value="bugfix"><option value="feature"><option value="spec">
+          </datalist></label>
+        <label>语言
+          <input id="ct-language" list="ct-lang-list" value="python">
+          <datalist id="ct-lang-list">
+            <option value="python"><option value="javascript"><option value="typescript"><option value="go">
+          </datalist></label>
+        <label>超时（秒）
+          <input id="ct-timeout" type="number" min="1" value="1800"></label>
+      </div>
+      <label>任务提示词 <b class="err">*</b>
+        <textarea id="ct-prompt" placeholder="交给被测 agent 的完整提示词。建议以「# 任务：…」开头，写清背景、要求与验收标准；勿附测试用例（此类任务无 verifier）。"></textarea></label>
+      <div class="actions">
+        <button id="btn-save-task" class="primary">保存任务</button>
+        <button id="btn-cancel-task" class="ghost">取消</button>
+      </div>
+      <p class="err" id="create-task-err"></p>
+    </div>
+    <div id="create-task-result"></div>
   </section>
 
   <!-- 步骤 2：登记候选并生成 run -->

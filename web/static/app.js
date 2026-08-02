@@ -117,13 +117,91 @@ function renderTasks() {
     list.forEach((t) => {
       const c = document.createElement("div");
       c.className = "task-card" + (S.taskId === t.task_id ? " selected" : "");
-      c.innerHTML = `<div class="tid">${esc(t.title)}</div>
+      c.innerHTML = `<div class="tid">${esc(t.title)}${t.judge_only ? '<span class="tag judge-only">纯judge评分</span>' : ""}</div>
         <div class="meta">${esc(t.task_id)} · ${esc(t.category)} · ${esc(t.language)} · 超时 ${esc(t.timeout_s)}s</div>`;
       c.onclick = () => { S.taskId = t.task_id; renderTasks(); showStep(1); };
       cards.appendChild(c);
     });
     g.appendChild(cards);
     box.appendChild(g);
+  }
+}
+
+/* ---------- 步骤 1：新建自定义任务（judge-only，纯提示词） ---------- */
+let slugTouched = false;   // 用户手改过 task_id 后，标题自动转写不再覆盖
+
+function slugifyTitle(title) {
+  // 与 scripts/prepare.py 的 slugify 同规则：纯中文标题会退化为 "unknown"
+  const slug = String(title || "").toLowerCase()
+    .replace(/[^a-z0-9.\-]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug || "unknown";
+}
+
+function updateSlugHint() {
+  const v = $("#ct-task-id").value.trim();
+  const hint = $("#ct-slug-hint");
+  const bad = Boolean(v) && !/^[a-z0-9][a-z0-9.-]*$/.test(v);
+  hint.textContent = bad ? "仅限小写字母/数字/点/连字符，须以字母或数字开头" : "";
+  hint.classList.toggle("bad", bad);
+}
+
+function onTitleInput() {
+  if (slugTouched) return;
+  const slug = slugifyTitle($("#ct-title").value);
+  const hint = $("#ct-slug-hint");
+  if (slug === "unknown") {
+    $("#ct-task-id").value = "";
+    hint.textContent = "中文标题无法自动转写，请手填 task_id（如 py-json-diff）";
+    hint.classList.remove("bad");
+  } else {
+    $("#ct-task-id").value = slug;
+    hint.textContent = "";
+    updateSlugHint();
+  }
+}
+
+function openCreateForm(open) {
+  $("#create-task-form").hidden = !open;
+  $("#btn-new-task").textContent = open ? "× 收起新建表单" : "+ 新建自定义任务（纯 judge 评分）";
+}
+
+async function saveTask() {
+  const errBox = $("#create-task-err");
+  errBox.textContent = "";
+  $("#create-task-result").innerHTML = "";
+  const payload = {
+    task_id: $("#ct-task-id").value.trim(),
+    title: $("#ct-title").value.trim(),
+    category: $("#ct-category").value.trim(),
+    difficulty: $("#ct-difficulty").value,
+    language: $("#ct-language").value.trim(),
+    timeout_s: Number($("#ct-timeout").value),
+    prompt_md: $("#ct-prompt").value,
+  };
+  if (!payload.task_id) { errBox.textContent = "task_id 不能为空（中文标题需手填）"; return; }
+  if (!payload.title) { errBox.textContent = "标题不能为空"; return; }
+  if (!payload.prompt_md.trim()) { errBox.textContent = "任务提示词不能为空"; return; }
+  const btn = $("#btn-save-task");
+  btn.disabled = true;
+  try {
+    const res = await api("/api/tasks", payload);
+    TASKS = await api("/api/tasks");   // init 时缓存过，必须重新拉取
+    S.taskId = res.task_id;
+    saveState();
+    renderTasks();
+    openCreateForm(false);
+    $("#create-task-result").innerHTML = `<div class="card">
+      <h4 class="ok">✓ 已创建并选中 ${esc(res.task_id)}<span class="tag judge-only">纯judge评分</span></h4>
+      <p class="muted">纯 judge 评分任务：L0 无客观分，综合分 = judge 盲评代码质量 + 过程能力 + 效率，
+      按可用权重和（默认 65）组内归一。落盘于 <code class="path">${esc(res.task_dir)}</code>，
+      可直接进第二步登记候选。</p></div>`;
+    ["ct-title", "ct-task-id", "ct-category", "ct-prompt"].forEach((id) => { $("#" + id).value = ""; });
+    $("#ct-slug-hint").textContent = "";
+    slugTouched = false;
+  } catch (e) {
+    errBox.textContent = "创建失败：" + e.message;
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -249,9 +327,12 @@ async function doCollect() {
       const card = document.createElement("div");
       card.className = "card";
       if (res.ok) {
+        const vTxt = res.verifier.skipped
+          ? "—（纯judge，无客观检查）"
+          : `${esc(res.verifier.passed)}/${esc(res.verifier.total)}`;
         card.innerHTML = `<h4 class="ok">✓ ${esc(res.run_id)}</h4>
           <p>tokens 共 <b>${Number(res.tokens).toLocaleString()}</b> · 成本 <b>$${(res.cost_usd || 0).toFixed(4)}</b>
-          · 耗时 <b>${esc(res.duration_s)}</b>s · verifier <b>${esc(res.verifier.passed)}/${esc(res.verifier.total)}</b></p>`;
+          · 耗时 <b>${esc(res.duration_s)}</b>s · verifier <b>${vTxt}</b></p>`;
       } else {
         card.innerHTML = `<h4 class="err">✗ ${esc(res.run_id)}（${esc(res.stage_failed)} 阶段失败）</h4>
           <p class="err">${esc(res.error)}</p>
@@ -427,6 +508,14 @@ async function init() {
   if (S.runs.length) { renderPrepareResults(); renderLaunchGuides(); }
 
   $("#add-cand").onclick = () => tbody.appendChild(candRow());
+  $("#btn-new-task").onclick = () => openCreateForm($("#create-task-form").hidden);
+  $("#btn-save-task").onclick = saveTask;
+  $("#btn-cancel-task").onclick = () => openCreateForm(false);
+  $("#ct-title").oninput = onTitleInput;
+  $("#ct-task-id").oninput = () => {
+    slugTouched = $("#ct-task-id").value.trim() !== "";
+    updateSlugHint();
+  };
   $("#btn-prepare").onclick = doPrepare;
   $("#btn-collect").onclick = doCollect;
   $("#btn-report").onclick = doReport;

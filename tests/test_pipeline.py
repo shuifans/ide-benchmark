@@ -502,7 +502,8 @@ def test_opencode_no_matching_session(tmp_path):
 
 def _write_fixture(base: Path, run_id: str, task: str, harness: str, model: str,
                    tokens: int, duration: float, verifier_passed: int, verifier_total: int,
-                   judge_scores: dict | None, status: str = "completed"):
+                   judge_scores: dict | None, status: str = "completed",
+                   judge_only: bool = False):
     runs_dir = base / "runs"
     scores_dir = base / "scores"
     runs_dir.mkdir(parents=True, exist_ok=True)
@@ -520,11 +521,13 @@ def _write_fixture(base: Path, run_id: str, task: str, harness: str, model: str,
     })
     (runs_dir / f"{run_id}.run.json").write_text(
         json.dumps(run, ensure_ascii=False), encoding="utf-8")
-    score = {
-        "run_id": run_id, "task_id": task,
-        "verifier": {"passed": verifier_passed, "total": verifier_total,
-                     "score": round(verifier_passed / verifier_total * 100, 1)},
-    }
+    if judge_only:
+        verifier = {"passed": 0, "total": 0, "score": 0.0, "status": "skipped",
+                    "reason": "judge-only 任务，无客观验证器，由 L2 judge 盲评评分"}
+    else:
+        verifier = {"passed": verifier_passed, "total": verifier_total,
+                    "score": round(verifier_passed / verifier_total * 100, 1)}
+    score = {"run_id": run_id, "task_id": task, "verifier": verifier}
     if judge_scores:
         score["judge"] = {"model": "judge-x", "rubric_version": "v2", "blind": True,
                           "scores": judge_scores}
@@ -603,3 +606,149 @@ def test_validate_all_cli():
     )
     # results/ 为空时退出码 2；有文件时 0/1。当前阶段为空。
     assert proc.returncode in (0, 1, 2)
+
+
+# ---------- judge-only 任务（Web 自定义任务，纯提示词 + judge 评分） ----------
+
+def test_verify_judge_only_skipped(tmp_path, monkeypatch):
+    """无 verifier.command 的任务：verify 写 skipped 占位段，不起子进程。"""
+    import verify
+
+    tasks_dir = tmp_path / "tasks"
+    (tasks_dir / "t-jo").mkdir(parents=True)
+    (tasks_dir / "t-jo" / "task.yaml").write_text(
+        "task_id: t-jo\ntitle: judge-only 任务\ncategory: feature\ndifficulty: medium\n"
+        "language: python\ntimeout_s: 600\nprompt_version: v1\n", encoding="utf-8")
+
+    runs_dir = tmp_path / "results" / "runs"
+    scores_dir = tmp_path / "results" / "scores"
+    runs_dir.mkdir(parents=True)
+    scores_dir.mkdir(parents=True)
+    run_id = "20260802-t-jo-claude-code-m1-01"
+    run = _minimal_run()
+    run.update({"run_id": run_id, "task_id": "t-jo"})
+    (runs_dir / f"{run_id}.run.json").write_text(
+        json.dumps(run, ensure_ascii=False), encoding="utf-8")
+    (tmp_path / "runs" / run_id / "work").mkdir(parents=True)
+
+    monkeypatch.setattr(common, "TASKS_DIR", tasks_dir)
+    monkeypatch.setattr(verify, "RESULTS_RUNS_DIR", runs_dir)
+    monkeypatch.setattr(verify, "RESULTS_SCORES_DIR", scores_dir)
+    monkeypatch.setattr(verify, "RUNS_DIR", tmp_path / "runs")
+
+    def _no_subprocess(*a, **kw):
+        raise AssertionError("judge-only 任务不应起 verifier 子进程")
+    monkeypatch.setattr(verify.subprocess, "run", _no_subprocess)
+
+    out = verify.verify(run_id)
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert doc["verifier"]["status"] == "skipped"
+    assert doc["verifier"]["passed"] == 0 and doc["verifier"]["total"] == 0
+    assert doc["verifier"]["score"] == 0.0
+    assert common.validate(doc, "score") == []
+
+
+def test_report_judge_only_composite(report_dirs, tmp_path):
+    """judge-only run：verifier 不贡献，composite 按 cq+P+T+D 权重和（65）归一，T/D 保留。"""
+    _write_fixture(report_dirs, "j-01", "tj", "claude-code", "m1",
+                   1000, 100, 0, 0, JUDGE_A, judge_only=True)
+    _write_fixture(report_dirs, "j-02", "tj", "qoder-cli", "m1",
+                   2000, 200, 0, 0, JUDGE_B, judge_only=True)
+
+    rows = report.compute_rows(["j-01", "j-02"], dict(report.DEFAULT_WEIGHTS))
+    by_id = {r["run_id"]: r for r in rows}
+
+    r1, r2 = by_id["j-01"], by_id["j-02"]
+    assert r1["judge_only"] is True and r2["judge_only"] is True
+    # 门槛：正常完成 → T/D 保留（不被误清零）
+    assert r1["gated"] is True and r1["t_score"] == 100.0 and r1["d_score"] == 100.0
+    assert r2["t_score"] == 50.0 and r2["d_score"] == 50.0
+    # composite = (cq_w*cq + P_part + T*15 + D*10) / 65 * 100
+    p1 = 30 * ((90 + 85 + 95) / 3) / 100          # 27
+    exp1 = (10 * 80 / 100 + p1 + 15 + 10) / 65 * 100   # 92.31
+    p2 = 30 * ((60 + 65 + 50) / 3) / 100          # 17.5
+    exp2 = (10 * 70 / 100 + p2 + 7.5 + 5) / 65 * 100   # 56.92
+    assert r1["composite"] == pytest.approx(exp1, abs=0.01)
+    assert r2["composite"] == pytest.approx(exp2, abs=0.01)
+    assert 0 <= r1["composite"] <= 100 and 0 <= r2["composite"] <= 100
+    assert r1["composite_renormalized"] is True
+
+    # 报告渲染：纯judge 文案出现，不出现误导性 0/0 与「满分」断言
+    out = report.render_compare(["j-01", "j-02"], dict(report.DEFAULT_WEIGHTS), tmp_path)
+    text = out.read_text(encoding="utf-8")
+    assert "纯judge" in text
+    assert "0/0" not in text
+    assert "均为满分" not in text
+    assert "‡" in text  # judge-only 归一化标记
+
+
+def test_create_task_validation_and_files(tmp_path, monkeypatch):
+    import create_task
+
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    monkeypatch.setattr(create_task, "TASKS_DIR", tasks_dir)
+    monkeypatch.setattr(common, "TASKS_DIR", tasks_dir)
+
+    res = create_task.create_task(
+        "py-json-diff", "JSON 差异对比工具", "", "medium", "", 1800,
+        "# 任务：实现 JSON 差异对比\n\n要求：写 pytest 自测。")
+    assert res["judge_only"] is True
+    task_dir = tasks_dir / "py-json-diff"
+    assert (task_dir / "task.yaml").is_file()
+    assert (task_dir / "prompt.md").is_file()
+    assert (task_dir / "workspace" / ".gitkeep").is_file()
+
+    import yaml
+    doc = yaml.safe_load((task_dir / "task.yaml").read_text(encoding="utf-8"))
+    for key in ("task_id", "title", "category", "difficulty", "language",
+                "timeout_s", "prompt_version"):
+        assert key in doc, f"缺 {key}"
+    assert "verifier" not in doc
+    assert doc["title"] == "JSON 差异对比工具"        # allow_unicode：中文原文落盘
+    assert doc["category"] == "feature" and doc["language"] == "python"  # 空值默认
+    prompt = (task_dir / "prompt.md").read_text(encoding="utf-8")
+    assert prompt.startswith("<!-- prompt_version: v1 -->")
+    assert "pytest 自测" in prompt
+
+    # list_tasks 识别 judge_only（派生字段）
+    listing = {t["task_id"]: t for t in common.list_tasks()}
+    assert listing["py-json-diff"]["judge_only"] is True
+
+    # 重名 → FileExistsError
+    with pytest.raises(FileExistsError):
+        create_task.create_task("py-json-diff", "t", "c", "easy", "python", 600, "p")
+    # 非法 task_id → ValueError
+    for bad in ("My Task", "../x", "a/b", ".", "-lead", ""):
+        with pytest.raises(ValueError):
+            create_task.create_task(bad, "t", "c", "easy", "python", 600, "p")
+    # 空提示词 / 非法难度 / 非法超时 → ValueError
+    with pytest.raises(ValueError):
+        create_task.create_task("ok-1", "t", "c", "easy", "python", 600, "  ")
+    with pytest.raises(ValueError):
+        create_task.create_task("ok-2", "t", "c", "insane", "python", 600, "p")
+    with pytest.raises(ValueError):
+        create_task.create_task("ok-3", "t", "c", "easy", "python", -5, "p")
+
+
+def test_judge_prompt_judge_only_note():
+    """judge 盲评材料：skipped verifier → 提示词验收说明，不渲染 0/0。"""
+    import judge
+
+    base_mat = {
+        "score": {"verifier": {}, "process_signals": {"planning": True}},
+        "difficulty": "medium", "task_prompt": "实现 X", "summary": "s", "diff": "d",
+    }
+    jo = dict(base_mat)
+    jo["score"] = {"verifier": {"passed": 0, "total": 0, "score": 0.0, "status": "skipped"},
+                   "process_signals": {}}
+    prompt_jo = judge._judge_prompt(jo)
+    assert "无客观验证器" in prompt_jo
+    assert "通过 0/0" not in prompt_jo
+
+    normal = dict(base_mat)
+    normal["score"] = {"verifier": {"passed": 9, "total": 9, "score": 100.0},
+                       "process_signals": {}}
+    prompt_normal = judge._judge_prompt(normal)
+    assert "通过 9/9" in prompt_normal
+    assert "无客观验证器" not in prompt_normal

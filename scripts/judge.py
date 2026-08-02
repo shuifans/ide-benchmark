@@ -25,7 +25,7 @@ from pathlib import Path
 
 from common import (
     CONFIG_DIR, RESULTS_RUNS_DIR, RESULTS_SCORES_DIR, ROOT, RUNS_DIR, TASKS_DIR,
-    dump_json, load_json, validate, eprint,
+    dump_json, is_judge_only_verifier, load_json, validate, eprint,
 )
 
 RUBRIC_PATH = CONFIG_DIR / "rubric-v3.md"
@@ -157,6 +157,15 @@ def _judge_prompt(mat: dict) -> str:
     rubric = RUBRIC_PATH.read_text(encoding="utf-8")
     verifier = mat["score"].get("verifier") or {}
     signals = mat["score"].get("process_signals") or {}
+    if is_judge_only_verifier(verifier):
+        verifier_section = ("## verifier 结果（客观检查）\n\n"
+                            "本任务无客观验证器（judge-only 任务）：没有 L0 测试通过率，"
+                            "请以【任务提示词】中的显式要求为唯一验收标准，"
+                            "据此评判产出物的完成度与质量。\n\n")
+    else:
+        verifier_section = ("## verifier 结果（客观检查）\n\n"
+                            f"通过 {verifier.get('passed')}/{verifier.get('total')}，"
+                            f"得分 {verifier.get('score')}\n\n")
     return anonymize(
         f"{rubric}\n\n"
         f"---\n\n"
@@ -164,8 +173,7 @@ def _judge_prompt(mat: dict) -> str:
         f"## 任务提示词\n\n{mat['task_prompt']}\n\n"
         f"## transcript 摘要\n\n{mat['summary']}\n\n"
         f"## L1 过程信号\n\n```json\n{json.dumps(signals, ensure_ascii=False, indent=2)}\n```\n\n"
-        f"## verifier 结果（客观检查）\n\n"
-        f"通过 {verifier.get('passed')}/{verifier.get('total')}，得分 {verifier.get('score')}\n\n"
+        f"{verifier_section}"
         f"## 最终代码 diff\n\n```diff\n{mat['diff']}\n```\n\n"
         f"---\n\n"
         f"请严格按 rubric v3 打分。只输出一个 JSON 对象，形如：\n"
@@ -243,7 +251,9 @@ def _candidate_row(run_id: str, label: str) -> dict:
     usage = run.get("usage") or {}
     return {
         "label": label,
-        "verifier": f"{verifier.get('passed')}/{verifier.get('total')}（{verifier.get('score')}分）",
+        "verifier": ("无（judge-only 任务，无客观验证器，以提示词要求为准）"
+                     if is_judge_only_verifier(verifier)
+                     else f"{verifier.get('passed')}/{verifier.get('total')}（{verifier.get('score')}分）"),
         "judge_scores": {k: judge.get(k) for k in
                          ("code_quality", "planning", "discipline", "self_test")},
         "judge_comments": judge.get("comments", ""),
@@ -285,7 +295,8 @@ def judge_compare(run_ids: list[str], force: bool = False) -> dict:
         f"以下是同一编码任务上多位匿名候选（编码 agent 工具）的测评数据。\n\n"
         f"## 任务提示词\n\n{task_prompt}\n\n"
         f"## 各候选数据\n\n```json\n{json.dumps(rows, ensure_ascii=False, indent=2)}\n```\n\n"
-        f"指标说明：verifier=客观测试通过情况（L0）；judge_scores=盲评四维 0-100（L2）；"
+        f"指标说明：verifier=客观测试通过情况（L0，judge-only 任务无验证器，以提示词要求为准）；"
+        f"judge_scores=盲评四维 0-100（L2）；"
         f"signals=从执行日志提取的客观过程信号（L1）；total_tokens/cost_usd/duration_s=效率成本。\n\n"
         f"请写一篇约 500-700 字的中文对比分析，使用 markdown，分四节：\n"
         f"### 结果差异\n### 过程风格差异\n### 效率取舍\n### 结论与建议\n\n"

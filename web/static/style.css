@@ -36,6 +36,15 @@ input,select{font:inherit;padding:5px 8px;border:1px solid var(--border);border-
 .task-card.selected{border-color:var(--blue);background:#f0f7ff;box-shadow:0 0 0 1px var(--blue)}
 .task-card .tid{font-weight:600;font-size:14px}
 .task-card .meta{color:var(--muted);font-size:12px;margin-top:6px}
+.task-card .tag.judge-only,#create-task-result .tag.judge-only{background:#ddf4ff;color:var(--blue);font-size:11px;border-radius:10px;padding:2px 10px;margin-left:6px;vertical-align:middle}
+/* 步骤 1：新建自定义任务表单 */
+#create-task-form label{display:block;margin:12px 0 4px;font-size:13px;font-weight:500}
+#create-task-form .ct-row{display:flex;gap:12px}
+#create-task-form .ct-row label{flex:1}
+#create-task-form textarea{width:100%;min-height:180px;font:inherit;font-size:13px;padding:8px;border:1px solid var(--border);border-radius:6px;margin-top:4px}
+#create-task-form .field-hint{display:block;font-weight:400;font-size:12px;color:var(--muted);margin-top:2px}
+#create-task-form .field-hint.bad{color:var(--red)}
+#create-task-form p.err{margin:8px 0 0}
 .card{border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-top:14px}
 .card h4{margin:0 0 8px;font-size:14px}
 .ok{color:var(--green);font-weight:600}

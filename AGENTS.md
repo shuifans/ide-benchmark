@@ -105,3 +105,9 @@ python scripts/report.py compare <run_id...> [--weights R45,P30,T15,D10]
 
 复制任意任务目录为模板（easy: `py-fix-off-by-one` / medium: `py-rate-limiter` / hard: `py-task-tracker`），
 改四件套，跑 `check_task.py` 看建议。
+
+**Web 向导创建的自定义任务是 judge-only 三件套**（无 `verifier/`、`task.yaml` 无 verifier 块）：
+verify 阶段写 `status: "skipped"` 占位段不跑子进程；report 综合分按 cq+P+T+D 权重和（默认 65）
+归一化（标 ‡），T/D 门槛仅看 `status == completed`；judge 盲评材料改为「以提示词要求为验收标准」；
+`check_task.py` 对 judge-only 跳过 prompt 泄漏扫描（提示词提 pytest/assert 属正当要求）。
+judge-only 任务不与带 verifier 的任务混比。

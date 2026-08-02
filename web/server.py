@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "adapters"))
 
 from common import AGENTS, REPORTS_DIR, RESULTS_SCORES_DIR, RUNS_DIR, list_tasks, load_json  # noqa: E402
+import create_task as create_task_mod  # noqa: E402
 import prepare as prepare_mod  # noqa: E402
 import collect as collect_mod  # noqa: E402
 import verify as verify_mod  # noqa: E402
@@ -39,7 +40,7 @@ JOBS_LOCK = threading.Lock()
 _PIPELINE_MODS = [
     "common", "pricing", "base",
     "claude_code", "qoder_cli", "opencode", "codex", "pi", "qwen", "kimi",
-    "prepare", "collect", "verify", "process_metrics", "report", "judge",
+    "create_task", "prepare", "collect", "verify", "process_metrics", "report", "judge",
 ]
 _PIPELINE_LOCK = threading.Lock()
 
@@ -108,6 +109,20 @@ def list_runs() -> list[dict]:
     return runs
 
 
+def do_create_task(payload: dict) -> dict:
+    """Web 向导「新建自定义任务」：落盘 judge-only 任务（纯提示词，无 verifier）。"""
+    _reload_pipeline()
+    return create_task_mod.create_task(
+        payload.get("task_id") or "",
+        payload.get("title") or "",
+        payload.get("category") or "",
+        payload.get("difficulty") or "",
+        payload.get("language") or "",
+        payload.get("timeout_s") if payload.get("timeout_s") not in (None, "") else 1800,
+        payload.get("prompt_md") or "",
+    )
+
+
 def do_prepare(payload: dict) -> list[dict]:
     _reload_pipeline()
     task_id = payload["task_id"]
@@ -149,7 +164,8 @@ def do_collect(payload: dict) -> list[dict]:
                 "cost_usd": u.get("cost_usd"),
                 "duration_s": run.get("duration_s"),
                 "verifier": {"passed": (score.get("verifier") or {}).get("passed"),
-                             "total": (score.get("verifier") or {}).get("total")},
+                             "total": (score.get("verifier") or {}).get("total"),
+                             "skipped": (score.get("verifier") or {}).get("status") == "skipped"},
             })
         except Exception as exc:  # noqa: BLE001
             entry.update({"stage_failed": stage, "error": str(exc)})
@@ -343,6 +359,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/prepare":
                 self._json(do_prepare(payload))
+            elif path == "/api/tasks":
+                self._json(do_create_task(payload))
             elif path == "/api/collect":
                 self._json(do_collect(payload))
             elif path == "/api/report":

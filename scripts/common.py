@@ -42,8 +42,14 @@ def list_tasks() -> list[dict]:
             "difficulty": task.get("difficulty", "easy"),
             "language": task.get("language"),
             "timeout_s": task.get("timeout_s"),
+            "judge_only": not bool((task.get("verifier") or {}).get("command")),
         })
     return tasks
+
+
+def is_judge_only_verifier(verifier: dict | None) -> bool:
+    """score.json 的 verifier 段是否来自 judge-only 任务（verify.py 未跑客观检查）。"""
+    return bool(verifier) and verifier.get("status") == "skipped"
 
 
 def load_json(path: Path | str):

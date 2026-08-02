@@ -97,7 +97,7 @@ def parse_pytest_output(output: str) -> tuple[int, int] | None:
     return passed, total
 
 
-def check_structure(task_dir: Path, f: Findings) -> dict:
+def check_structure(task_dir: Path, f: Findings, judge_only: bool = False) -> dict:
     """检查四件套是否齐全，返回各部分存在情况。"""
     parts = {
         "task.yaml": task_dir / "task.yaml",
@@ -111,6 +111,8 @@ def check_structure(task_dir: Path, f: Findings) -> dict:
         present[name] = exists
         if exists:
             f.ok(f"存在 {name}")
+        elif name == "verifier/" and judge_only:
+            f.info("judge-only 任务：无需 verifier/（L0 无客观分，由 L2 judge 盲评）")
         else:
             f.warn(f"缺少 {name}（预期路径 {path}）")
     return present
@@ -130,7 +132,7 @@ def check_fields(task: dict, task_id: str, f: Findings) -> None:
 
     verifier = task.get("verifier") or {}
     if not verifier.get("command"):
-        f.warn("task.yaml 未配置 verifier.command，verify 阶段将无法评分")
+        f.info("judge-only 任务：未配置 verifier.command，L0 客观分缺省，由 L2 judge 盲评评分")
 
 
 def check_verifier(task: dict, task_dir: Path, f: Findings) -> None:
@@ -225,20 +227,23 @@ def check_task(task_id: str) -> Findings:
         f.warn(f"任务目录不存在：{task_dir}")
         return f
 
-    present = check_structure(task_dir, f)
-    if not present.get("task.yaml"):
-        return f  # 无 task.yaml 无法继续字段/verifier 检查
+    task = None
+    if (task_dir / "task.yaml").is_file():
+        try:
+            task = load_task(task_id)
+        except Exception as exc:  # noqa: BLE001 - 建议级，吞掉解析异常
+            f.warn(f"task.yaml 解析失败：{exc}")
+    judge_only = task is not None and not (task.get("verifier") or {}).get("command")
 
-    try:
-        task = load_task(task_id)
-    except Exception as exc:  # noqa: BLE001 - 建议级，吞掉解析异常
-        f.warn(f"task.yaml 解析失败：{exc}")
-        return f
+    present = check_structure(task_dir, f, judge_only=judge_only)
+    if task is None:
+        return f  # 无/不可解析 task.yaml，无法继续字段/verifier 检查
 
     check_fields(task, task_id, f)
-    if present.get("verifier/") or (task.get("verifier") or {}).get("command"):
+    if present.get("verifier/") or not judge_only:
         check_verifier(task, task_dir, f)
-    if present.get("prompt.md"):
+    # judge-only 任务没有 verifier，prompt.md 提到 pytest/assert 是正当任务要求而非检查手段泄漏
+    if present.get("prompt.md") and not judge_only:
         check_prompt_leak(task_dir, f)
     return f
 

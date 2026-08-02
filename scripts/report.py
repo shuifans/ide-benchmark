@@ -11,6 +11,11 @@
             + 0.10*duration_norm                                (D 时间成本 10)
   其中 token_norm/duration_norm 为同任务组内 min-max 归一化（越低越好），
   verifier 通过数为 0 或 status 非 completed 的 run，T/D 效率分记 0（质量门槛）。
+
+judge-only 任务（verifier.status == "skipped"，Web 创建的纯提示词自定义任务）：
+  verifier 不贡献分数，综合分按可用权重和（默认 0.10+0.30+0.15+0.10 = 65）
+  重归一化到 0–100，标 ‡；T/D 门槛仅看 status == completed。
+  此类任务不应与带 verifier 的任务混入同一对比。
 """
 from __future__ import annotations
 
@@ -24,7 +29,7 @@ from pathlib import Path
 
 from common import (
     REPORTS_DIR, RESULTS_RUNS_DIR, RESULTS_SCORES_DIR, RUNS_DIR, TASKS_DIR,
-    load_json, eprint,
+    is_judge_only_verifier, load_json, eprint,
 )
 import pricing
 
@@ -246,8 +251,13 @@ def compute_rows(run_ids: list[str], weights: dict) -> list[dict]:
             js.get(k) is not None for k in ("code_quality", "planning", "discipline", "self_test"))
 
         ver_error = _is_verifier_error(verifier)
+        judge_only = is_judge_only_verifier(verifier)
         # 质量门槛：代码验证通过且正常完成 → T/D 才计分；环境异常 → N/A；确未通过 → 清零
-        gate = (not ver_error) and (verifier.get("passed", 0) > 0) and run.get("status") == "completed"
+        # judge-only 任务无客观验证器：T/D 是否计分仅看运行是否正常完成
+        if judge_only:
+            gate = run.get("status") == "completed"
+        else:
+            gate = (not ver_error) and (verifier.get("passed", 0) > 0) and run.get("status") == "completed"
         if ver_error:
             t_score = None
             d_score = None
@@ -269,6 +279,16 @@ def compute_rows(run_ids: list[str], weights: dict) -> list[dict]:
 
         if not (judge_ok and v_score is not None):
             composite, renorm = None, False
+        elif judge_only:
+            # judge-only 任务：verifier 不贡献，按可用权重和（cq+P+T+D，默认 65）重归一到 0–100
+            cq_w = weights["R"] * SUB_RATIO["R"]["code_quality"]
+            cq_contrib = cq_w * js["code_quality"] / 100
+            denom = cq_w + weights["P"] + weights["T"] + weights["D"]
+            composite = ((cq_contrib + p_part
+                          + weights["T"] * (t_score or 0) / 100
+                          + weights["D"] * (d_score or 0) / 100) / denom * 100
+                         if denom else None)
+            renorm = True
         elif ver_error:
             # 验证环境异常：仅用 R 的代码质量子项 + P，按其权重和重归一化到 0–100
             cq_w = weights["R"] * SUB_RATIO["R"]["code_quality"]
@@ -285,6 +305,7 @@ def compute_rows(run_ids: list[str], weights: dict) -> list[dict]:
         r.update({
             "verifier_score": v_score,
             "verifier_error": ver_error,
+            "judge_only": judge_only,
             "judge_ok": judge_ok,
             "judge_scores": js,
             "t_score": round(t_score, 2) if t_score is not None else None,
@@ -308,6 +329,7 @@ def group_medians(rows: list[dict]) -> list[dict]:
         entry = {
             "task_id": task_id, "harness": harness, "model": model,
             "n": len(members), "members": members,
+            "judge_only": any(m.get("judge_only") for m in members),
             "composite_med": round(statistics.median(composites), 2) if composites else None,
             "composite_min": min(composites) if composites else None,
             "composite_max": max(composites) if composites else None,
@@ -315,7 +337,8 @@ def group_medians(rows: list[dict]) -> list[dict]:
         for field in ("verifier_score", "t_score", "d_score"):
             vals = [m[field] for m in members
                     if m.get(field) is not None
-                    and not (field == "verifier_score" and m.get("verifier_error"))]
+                    and not (field == "verifier_score"
+                             and (m.get("verifier_error") or m.get("judge_only")))]
             entry[field + "_med"] = round(statistics.median(vals), 2) if vals else None
         out.append(entry)
     return out
@@ -487,7 +510,11 @@ def _single_body(run_id: str, heading_level: str = "h1") -> str:
                 + cost_breakdown_html(run)
                 + "</details></div>")
 
-    if verifier:
+    if is_judge_only_verifier(verifier):
+        body.append("<div class=\"card\"><h3>客观检查（verifier）</h3>"
+                    "<p class=\"muted\">本任务无客观验证器（judge-only 自定义任务）："
+                    "以任务提示词的显式要求为验收标准，由 L2 judge 盲评评分。</p></div>")
+    elif verifier:
         body.append(f"<div class=\"card\"><h3>客观检查（verifier）</h3>"
                     f"<p>通过 <b>{verifier.get('passed', 0)}</b> / {verifier.get('total', 0)}，"
                     f"得分 <b>{fmt(verifier.get('score'))}</b></p>"
@@ -518,6 +545,7 @@ def dim_scores(r: dict) -> dict | None:
     """返回单次 run 的四大维度 0-100 分（R 结果 / P 过程 / T token / D 时间）。
 
     验证环境异常时 T/D 为 None（展示 N/A），R 仅含代码质量（r_cq_only=True）。
+    judge-only 任务 R 仅含代码质量（r_judge_only=True），T/D 正常。
     """
     if not r.get("judge_ok"):
         return None
@@ -528,6 +556,10 @@ def dim_scores(r: dict) -> dict | None:
     if r.get("verifier_error"):
         rr = js["code_quality"]
         t = d = None
+    elif r.get("judge_only"):
+        rr = js["code_quality"]
+        t = r.get("t_score")
+        d = r.get("d_score")
     else:
         rr = ((r.get("verifier_score") or 0) * SUB_RATIO["R"]["verifier"]
               + js["code_quality"] * SUB_RATIO["R"]["code_quality"])
@@ -536,7 +568,8 @@ def dim_scores(r: dict) -> dict | None:
     return {"R": round(rr, 1), "P": round(pp, 1),
             "T": round(t, 1) if t is not None else None,
             "D": round(d, 1) if d is not None else None,
-            "r_cq_only": bool(r.get("verifier_error"))}
+            "r_cq_only": bool(r.get("verifier_error")),
+            "r_judge_only": bool(r.get("judge_only"))}
 
 
 def task_section_html(task_id: str) -> str:
@@ -702,15 +735,23 @@ def ranking_html(groups: list[dict]) -> str:
     def spread(key):
         vals = [g[key] for g in ranked if g.get(key) is not None]
         return (max(vals) - min(vals)) if len(vals) >= 2 else 0
-    spans = {"任务结果": spread("verifier_score_med"),
-             "token 成本": spread("t_score_med"),
+    all_judge_only = all(g.get("judge_only") for g in ranked)
+    spans = {"token 成本": spread("t_score_med"),
              "时间成本": spread("d_score_med")}
+    if not all_judge_only:
+        spans = {"任务结果": spread("verifier_score_med"), **spans}
     driver = max(spans, key=spans.get) if spans else ""
     verifier_vals = [g["verifier_score_med"] for g in ranked if g.get("verifier_score_med") is not None]
     same_result = verifier_vals and (max(verifier_vals) - min(verifier_vals) < 1e-6)
+    if all_judge_only:
+        result_clause = "纯 judge 评分任务（无客观验证器），排名由 judge 盲评与过程/效率维度拉开；"
+    elif same_result:
+        result_clause = "任务结果（verifier）均为满分、不分伯仲；"
+    else:
+        result_clause = "各对象任务结果存在差异；"
     lead = (
         f'<p class="legend">共 {len(ranked)} 个参评对象。'
-        + ("任务结果（verifier）均为满分、不分伯仲；" if same_result else "各对象任务结果存在差异；")
+        + result_clause
         + f'拉开排名的主要维度是【{driver}】（组间极差最大）。'
         + '详见下方“评分构成拆解”与“总览”。</p>')
     return "<h2>排名与结论</h2>" + '<div class="rank">' + "".join(cards) + "</div>" + lead
@@ -726,8 +767,16 @@ def breakdown_html(rows: list[dict], weights: dict) -> str:
             continue
         run = r["run"]
         comp = r.get("composite")
-        comp_txt = (fmt(comp) + "†") if r.get("composite_renormalized") else fmt(comp)
-        wr = (d["R"] or 0) * (weights["R"] / 100)
+        if r.get("judge_only"):
+            comp_txt = fmt(comp) + "‡"
+        elif r.get("composite_renormalized"):
+            comp_txt = fmt(comp) + "†"
+        else:
+            comp_txt = fmt(comp)
+        # judge-only 任务的 R 仅含代码质量，有效权重为 R×code_quality 子比例
+        r_weight = (weights["R"] * SUB_RATIO["R"]["code_quality"]
+                    if d.get("r_judge_only") else weights["R"])
+        wr = (d["R"] or 0) * (r_weight / 100)
         wp = (d["P"] or 0) * (weights["P"] / 100)
         wt = (d["T"] or 0) * (weights["T"] / 100)
         wd = (d["D"] or 0) * (weights["D"] / 100)
@@ -741,7 +790,7 @@ def breakdown_html(rows: list[dict], weights: dict) -> str:
                   else f'<td data-v="{d["T"]}">{fmt(d["T"])} <span class="muted">(+{wt:.1f})</span></td>')
         d_cell = ('<td class="na">N/A</td>' if d["D"] is None
                   else f'<td data-v="{d["D"]}">{fmt(d["D"])} <span class="muted">(+{wd:.1f})</span></td>')
-        r_star = "*" if d.get("r_cq_only") else ""
+        r_star = "*" if d.get("r_cq_only") else ("‡" if d.get("r_judge_only") else "")
         row_cls = ' class="warn"' if r.get("verifier_error") else ""
         trs.append(
             f'<tr{row_cls}><td>{esc(run["agent"]["harness"])}<br><span class="muted">{esc(run["agent"]["model"])}</span></td>'
@@ -754,7 +803,9 @@ def breakdown_html(rows: list[dict], weights: dict) -> str:
               '<span class="k sd" style="margin-left:12px"></span>D 时间成本'
               '。括号内为该维度对综合分的加权贡献，堆叠条宽度与之成比。'
               '<b>N/A</b>=该维度因验证环境异常不可信；<b>*</b>=R 仅含代码质量（verifier 缺失）；'
-              '<b>†</b>=综合分已按「代码质量+过程能力」重归一化，不可与正常运行直接比。</p>')
+              '<b>†</b>=综合分已按可用维度权重（代码质量+过程能力）重归一化，不可与正常运行直接比；'
+              '<b>‡</b>=judge-only 任务（无客观验证器），R 仅含代码质量，综合分按 cq+P+T+D '
+              '权重和（默认 65）归一化，不与带 verifier 的任务混比。</p>')
     return ("<h2>评分构成拆解（维度分 0–100 · 括号为加权贡献）</h2>"
             "<table><thead><tr><th>Agent</th><th data-sort=\"num\">综合分</th>"
             "<th data-sort=\"num\">R 任务结果</th><th data-sort=\"num\">P 过程能力</th>"
@@ -788,6 +839,11 @@ def render_compare(run_ids: list[str], weights: dict, out_dir: Path) -> Path:
                     '（如 <code>python</code> 命令不存在），其 T / D 与 verifier 不可信，综合分已按'
                     '「代码质量 + 过程能力」重归一化并标 †，<b>不可与正常运行直接比较</b>。<ul>'
                     + items + '</ul></div>')
+
+    if any(r.get("judge_only") for r in rows):
+        body.append('<p class="legend"><b>注</b>：本报告含 judge-only 任务（Web 创建的纯提示词自定义任务）：'
+                    '无 L0 客观分，综合分按「代码质量 + 过程能力 + 效率」权重和（默认 65）归一化并标 ‡，'
+                    '<b>不应与带 verifier 的任务混比</b>（向导按单任务出报告，天然不混）。</p>')
 
     # 任务说明 + 测试环境 + 评估方法 + 排名 + LLM 对比分析 + 评分构成拆解
     task_ids = sorted({r["run"]["task_id"] for r in rows})
@@ -834,6 +890,8 @@ def render_compare(run_ids: list[str], weights: dict, out_dir: Path) -> Path:
                 marks.append("验证环境异常")
             elif not m.get("gated"):
                 marks.append("效率清零")
+            if m.get("judge_only") and "纯judge评分" not in marks:
+                marks.append("纯judge评分")
         u = run0["run"]["usage"]
         row_cls = ' class="warn"' if any(("不一致" in str(m)) or ("清零" in str(m)) or ("异常" in str(m)) for m in marks) else ""
         trs.append(
@@ -841,7 +899,9 @@ def render_compare(run_ids: list[str], weights: dict, out_dir: Path) -> Path:
             f"<td data-v=\"{g['n']}\">{g['n']}</td>"
             f"<td data-v=\"{med if med is not None else -1}\">{comp_cell}</td>"
             f"<td>{span}</td>"
-            f"<td data-v=\"{g['verifier_score_med'] if g['verifier_score_med'] is not None else -1}\">{fmt(g['verifier_score_med'])}</td>"
+            + (f'<td data-v="-1">—<span class="muted">（纯judge）</span></td>'
+               if g.get("judge_only") else
+               f"<td data-v=\"{g['verifier_score_med'] if g['verifier_score_med'] is not None else -1}\">{fmt(g['verifier_score_med'])}</td>") +
             f"<td data-v=\"{g['t_score_med'] if g['t_score_med'] is not None else -1}\">{fmt(g['t_score_med'])}</td>"
             f"<td data-v=\"{g['d_score_med'] if g['d_score_med'] is not None else -1}\">{fmt(g['d_score_med'])}</td>"
             f'<td data-v="{total_input(u)}">{total_input(u):,}</td>'
@@ -859,12 +919,17 @@ def render_compare(run_ids: list[str], weights: dict, out_dir: Path) -> Path:
         run, score = r["run"], r["score"]
         verifier = (score or {}).get("verifier") or {}
         js = r.get("judge_scores") or {}
-        comp = fmt(r.get("composite")) + ("†" if r.get("composite_renormalized") else "")
+        comp = fmt(r.get("composite")) + ("‡" if r.get("judge_only")
+                                          else "†" if r.get("composite_renormalized") else "")
         ver_txt = ("环境异常 N/A" if r.get("verifier_error")
+                   else "纯judge（无验证器）" if r.get("judge_only")
                    else f"{verifier.get('passed', '-')}/{verifier.get('total', '-')}")
+        result_txt = ("N/A" if r.get("verifier_error")
+                      else "—" if r.get("judge_only")
+                      else fmt(r.get("verifier_score")))
         body.append(
             f"<div class=\"card\"><b>{esc(r['run_id'])}</b> · 综合分 <b>{comp}</b>"
-            f"（结果 {'N/A' if r.get('verifier_error') else fmt(r.get('verifier_score'))} · token {fmt(r.get('t_score'))} · 时间 {fmt(r.get('d_score'))}）<br>"
+            f"（结果 {result_txt} · token {fmt(r.get('t_score'))} · 时间 {fmt(r.get('d_score'))}）<br>"
             f"{signal_badges(run.get('process'))}"
             f"<p class=\"muted\">verifier {ver_txt}"
             f" · judge {'已评' if r['judge_ok'] else '未评'}"
@@ -876,7 +941,8 @@ def render_compare(run_ids: list[str], weights: dict, out_dir: Path) -> Path:
     for r in rows:
         comp = fmt(r.get("composite"))
         summary = (f"{esc(r['run_id'])} · 综合分 {comp}"
-                   f"（结果 {fmt(r.get('verifier_score'))} · token {fmt(r.get('t_score'))} · 时间 {fmt(r.get('d_score'))}）")
+                   f"（结果 {'—' if r.get('judge_only') else fmt(r.get('verifier_score'))} · "
+                   f"token {fmt(r.get('t_score'))} · 时间 {fmt(r.get('d_score'))}）")
         body.append(
             f"<details class=\"card\"><summary><b>{summary}</b></summary>"
             + _single_body(r["run_id"], heading_level="h3")
