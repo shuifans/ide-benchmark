@@ -32,5 +32,15 @@
   "status": "completed",
   "prompt_sha256": "d6856e8498d4c89dd9d4e9a63c97f1cef213199e91b95b4eb816eeb2b1fe900c",
   "manifest_sha256": "0a777da4c6948dd64e404ea3015fa19520b2c186cad29726e2b387fa6a0abcc3",
-  "notes": "模型一致: dfmodel；剔除 2 次辅助调用（model_key=lite，共 2369 tokens，如标题生成）"
+  "notes": "模型一致: dfmodel；剔除 2 次辅助调用（model_key=lite，共 2369 tokens，如标题生成）",
+  "process": {
+    "planning": true,
+    "plan_items": 0,
+    "plan_completed": 0,
+    "scope_adherence": 0.6,
+    "self_test_after_last_edit": true,
+    "self_test_kind": "framework",
+    "retry_pattern_max": 0,
+    "failed_tool_calls": 0
+  }
 }
